@@ -6,9 +6,18 @@ from html.parser import HTMLParser
 # from html.entities import name2codepoint
 import logging
 import sys
+import os.path
 import xml.etree.ElementTree as ET
 
+class FVDevice:
+    def __init__(self, name):
+        self.name = name
+        self.props = { "name": name} 
+        
+    def listComponents(self):
+        return ["name","consumptionL1","consumptionL2","consumptionL3","timeRangeName","timeRangeName","FVtype"]
 
+        
 class MyHTMLParser(HTMLParser):
     def __init__(self):
         HTMLParser.__init__(self)
@@ -23,8 +32,8 @@ def getHTMLfile(args, PRS):
     FVuser = args.FVuser[0]
     FVpwd = args.FVpwd[0]
     FVurl = args.FVurl[0]
-    if args.noURL is True:
-        with open("/home/psafarik/Dropbox/tmp/index.html", "r", encoding='ISO-8859-1') as myfile:
+    if args.noURL:
+        with open(args.noURL[0], "r", encoding='ISO-8859-1') as myfile:
             contentlist = myfile.readlines()
         content = ''.join(contentlist)
         PRS.feed(content)
@@ -70,7 +79,9 @@ def parseArgs():
                         help='Username of FVE user, default pvwr')
     parser.add_argument('--FVurl', nargs=1, required=False, action='store', default=['stridac'],
                         help='URL to FVE, default is \'stridac\'')
-    parser.add_argument('--noURL', required=False, action='store_true', default=['False'],
+    parser.add_argument('--configfile', nargs=1, required=False, action='store', default=[os.path.join(os.path.expanduser("~"),'.FVrc')],
+                        help='Path to default config. Default is ~/.FVrc')
+    parser.add_argument('--noURL', nargs=1, required=False, action='store', default=[os.path.join(os.path.expanduser("~"),'/Dropbox/tmp/index.html')],
                         help='Use file instead of URL, for debug only')
     parser.add_argument('--debug', required=False, action='store_true', default=['False'], help='Run in debug mode')
     return parser.parse_args()
@@ -78,7 +89,7 @@ def parseArgs():
 
 def initLogging(debug):
     logger.setLevel(logging.DEBUG)
-    fh = logging.FileHandler('log/FVctl.log')
+    fh = logging.FileHandler('log/FVctl.log',mode='a')
     fh.setLevel(logging.DEBUG)
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
@@ -92,17 +103,18 @@ def initLogging(debug):
     logger.debug('Logger info: %s', logger)
 
 
-def getDevices():
-    tree = ET.parse('/home/psafarik/.FVrc')
+def getDevices(args):
+    tree = ET.parse(args.configfile[0])
     root = tree.getroot()
     for dev in root.findall('device'):
-        name = dev.find('name').text
-        consumptionL1 = int(dev.find('consumptionL1').text)
-        consumptionL2 = int(dev.find('consumptionL2').text)
-        consumptionL3 = int(dev.find('consumptionL3').text)
-        timeRangeName = int(dev.find('timeRangeName').text)
-        runInLow = dev.get('runInLow')
-        logger.info("Name: %s, Consumption:%d|%d|%d, runInLow: %s", name, consumptionL1, consumptionL2, consumptionL3, runInLow, timeRangeName )
+        zarizeni = FVDevice(dev.find('name').text)
+        for component in zarizeni.listComponents():
+            if hasattr(dev.find(component),'text'):
+                zarizeni.props[component] = dev.find(component).text
+        #zarizeni.props[runInLow = dev.get('runInLow')
+        print(zarizeni.props.items())
+
+        #logger.info("Name: %s, Consumption:%d|%d|%d, runInLow: %s, timeRangeName: %s", zarizeni.name, int(zarizeni.consumptionL1), int(zarizeni.consumptionL2), int(zarizeni.consumptionL3), zarizeni.runInLow, zarizeni.timeRangeName )
         
                 
 #def getLowTime():          
@@ -120,7 +132,7 @@ def main():
     initLogging(args.debug)
     logger.debug('Accepted params: %s', args)
     rawdata = getRawData(args)
-    devices = getDevices()
+    devices = getDevices(args)
 
 
 logger = logging.getLogger('FVctl')
