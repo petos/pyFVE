@@ -3,94 +3,126 @@ import argparse
 import httplib2
 import re
 from html.parser import HTMLParser
-from html.entities import name2codepoint
+# from html.entities import name2codepoint
 import logging
 import sys
-
+import xml.etree.ElementTree as ET
 
 
 class MyHTMLParser(HTMLParser):
-	def __init__(self):
-		HTMLParser.__init__(self)
-		self.data = []
-	def handle_data(self, data):
-		if not re.match(r'^\s*$', data):
-			self.data.append(re.sub(r'\n','',data))
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self.data = []
+
+    def handle_data(self, data):
+        if not re.match(r'^\s*$', data):
+            self.data.append(re.sub(r'\n', '', data))
+
 
 def getHTMLfile(args, PRS):
-	FVuser=args.FVuser[0]
-	FVpwd=args.FVpwd[0]
-	FVurl=args.FVurl[0]
-	if args.noURL == True:
-		with open("/home/psafarik/Dropbox/tmp/index.html", "r", encoding='ISO-8859-1') as myfile:
-			contentlist=myfile.readlines()
-		content = ''.join(contentlist)
-		PRS.feed(content)
-	else:
-		h = httplib2.Http(".cache")
-		h.add_credentials(FVuser, FVpwd)
-		try:
-			resp, content = h.request("http://"+FVurl)
-		except httplib2.ServerNotFoundError:
-			logger.error('Can not connect to %s', FVurl)
-			exit(11)
-		PRS.feed(content.decode('ISO-8859-1'))
+    FVuser = args.FVuser[0]
+    FVpwd = args.FVpwd[0]
+    FVurl = args.FVurl[0]
+    if args.noURL is True:
+        with open("/home/psafarik/Dropbox/tmp/index.html", "r", encoding='ISO-8859-1') as myfile:
+            contentlist = myfile.readlines()
+        content = ''.join(contentlist)
+        PRS.feed(content)
+    else:
+        h = httplib2.Http(".cache")
+        h.add_credentials(FVuser, FVpwd)
+        try:
+            resp, content = h.request("http://" + FVurl)
+        except httplib2.ServerNotFoundError:
+            logger.error('Can not connect to %s', FVurl)
+            exit(11)
+        PRS.feed(content.decode('ISO-8859-1'))
+
 
 def getRawData(args):
-	PRS = MyHTMLParser()
-	getHTMLfile(args, PRS)
-	if PRS.data[(PRS.data.index('  aktuální'))+1] == 'xxx':
-		PRS.data[(PRS.data.index('  aktuální'))+1] = 0
-	rawdata = {
-		'produced_now': int(PRS.data[(PRS.data.index('  aktuální'))+1]),
-		'today_total': float(PRS.data[(PRS.data.index('  denní energie'))+1]),
-		'energy_total': int(PRS.data[(PRS.data.index('  energie celkem'))+1]),
-		'state': str(PRS.data[(PRS.data.index('  stav'))+1]),
-		'L1': int(PRS.data[(PRS.data.index('L1'))+11]),
-		'L2': int(PRS.data[(PRS.data.index('L2'))+11]),
-		'L3': int(PRS.data[(PRS.data.index('L3'))+5]),
-		'bucket': int(PRS.data[(PRS.data.index('  aktuální'))+1])
-		}
-	logger.debug('Parsed values: %s', rawdata)
-	logger.info('Producing now: %d', rawdata['bucket'])
-	PRS.close
-	return rawdata
+    PRS = MyHTMLParser()
+    getHTMLfile(args, PRS)
+    if PRS.data[(PRS.data.index('  aktuální')) + 1] == 'xxx':
+        PRS.data[(PRS.data.index('  aktuální')) + 1] = 0
+    rawdata = dict(produced_now=int(PRS.data[(PRS.data.index('  aktuální')) + 1]),
+                   today_total=float(PRS.data[(PRS.data.index('  denní energie')) + 1]),
+                   energy_total=int(PRS.data[(PRS.data.index('  energie celkem')) + 1]),
+                   state=str(PRS.data[(PRS.data.index('  stav')) + 1]), L1=int(PRS.data[(PRS.data.index('L1')) + 11]),
+                   L2=int(PRS.data[(PRS.data.index('L2')) + 11]), L3=int(PRS.data[(PRS.data.index('L3')) + 5]),
+                   bucket=int(PRS.data[(PRS.data.index('  aktuální')) + 1]))
+    logger.debug('Parsed values: %s', rawdata)
+    logger.info('Status          :  %s', rawdata['state'])
+    logger.info('Producing now   :  %s [W]', rawdata['bucket'])
+    logger.info('Today generated :  %s [kW]', rawdata['today_total'])
+    logger.info('L1              :  %s [W]', rawdata['L1'])
+    logger.info('L2              :  %s [W]', rawdata['L2'])
+    logger.info('L3              :  %s [W]', rawdata['L3'])
+    logger.info('Generated total :  %s [kW]', rawdata['energy_total'])
+    PRS.close
+    return rawdata
+
 
 def parseArgs():
-#	logger.info('Starting run of FVctl')
-	parser = argparse.ArgumentParser(prog='FVctrl', description='Get FV and optimalize consumption.')
-	parser.add_argument('--FVuser', nargs=1, required=False, action='store', default=['pvserver'], help='Username of FVE user, default pvserver')
-	parser.add_argument('--FVpwd', nargs=1, required=False, action='store', default=['pvwr'], help='Username of FVE user, default pvwr')
-	parser.add_argument('--FVurl', nargs=1, required=False, action='store', default=['stridac'], help='URL to FVE, default is \'stridac\'')
-	parser.add_argument('--noURL', required=False, action='store_true', default=['False'], help='Use file instead of URL, for debug only')
-	parser.add_argument('--debug', required=False, action='store_true', default=['False'], help='Run in debug mode')
-#	logger.debug('Accepted params: %s', parser.parse_args())
-	return parser.parse_args()
+    parser = argparse.ArgumentParser(prog='FVctrl', description='Get FV and optimalize consumption.')
+    parser.add_argument('--FVuser', nargs=1, required=False, action='store', default=['pvserver'],
+                        help='Username of FVE user, default pvserver')
+    parser.add_argument('--FVpwd', nargs=1, required=False, action='store', default=['pvwr'],
+                        help='Username of FVE user, default pvwr')
+    parser.add_argument('--FVurl', nargs=1, required=False, action='store', default=['stridac'],
+                        help='URL to FVE, default is \'stridac\'')
+    parser.add_argument('--noURL', required=False, action='store_true', default=['False'],
+                        help='Use file instead of URL, for debug only')
+    parser.add_argument('--debug', required=False, action='store_true', default=['False'], help='Run in debug mode')
+    return parser.parse_args()
+
 
 def initLogging(debug):
-	logger.setLevel(logging.DEBUG)
-	fh = logging.FileHandler('log/FVctl.log')
-	fh.setLevel(logging.DEBUG)
-	ch = logging.StreamHandler(sys.stdout)
-	ch.setLevel(logging.INFO)
-	if debug == True:
-		ch.setLevel(logging.DEBUG)
-	formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-	fh.setFormatter(formatter)
-	ch.setFormatter(formatter)
-	logger.addHandler(fh)
-	logger.addHandler(ch)
-	logger.debug('Logger info: %s', logger)
+    logger.setLevel(logging.DEBUG)
+    fh = logging.FileHandler('log/FVctl.log')
+    fh.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    if debug is True:
+        ch.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    logger.debug('Logger info: %s', logger)
 
+
+def getDevices():
+    tree = ET.parse('/home/psafarik/.FVrc')
+    root = tree.getroot()
+    for dev in root.findall('device'):
+        name = dev.find('name').text
+        consumptionL1 = int(dev.find('consumptionL1').text)
+        consumptionL2 = int(dev.find('consumptionL2').text)
+        consumptionL3 = int(dev.find('consumptionL3').text)
+        timeRangeName = int(dev.find('timeRangeName').text)
+        runInLow = dev.get('runInLow')
+        logger.info("Name: %s, Consumption:%d|%d|%d, runInLow: %s", name, consumptionL1, consumptionL2, consumptionL3, runInLow, timeRangeName )
+        
+                
+#def getLowTime():          
+         
+            
+# ~ for country in root.findall('country'):
+    # ~ rank = country.find('rank').text
+    # ~ name = country.get('name')
+    # ~ print name, rank
 
 ########################################################################
 
 def main():
-	args = parseArgs()
-	initLogging(args.debug)
-	logger.debug('Accepted params: %s', args)
-	rawdata=getRawData(args)
-	
+    args = parseArgs()
+    initLogging(args.debug)
+    logger.debug('Accepted params: %s', args)
+    rawdata = getRawData(args)
+    devices = getDevices()
+
+
 logger = logging.getLogger('FVctl')
 
 main()
