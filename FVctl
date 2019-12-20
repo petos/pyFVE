@@ -7,7 +7,8 @@ from html.parser import HTMLParser
 import logging
 import sys
 import os.path
-import xml.etree.ElementTree as ET
+import yaml
+
 
 class FVDevice:
     def __init__(self, name):
@@ -81,7 +82,7 @@ def parseArgs():
                         help='URL to FVE, default is \'stridac\'')
     parser.add_argument('--configfile', nargs=1, required=False, action='store', default=[os.path.join(os.path.expanduser("~"),'.FVrc')],
                         help='Path to default config. Default is ~/.FVrc')
-    parser.add_argument('--noURL', nargs=1, required=False, action='store', default=[os.path.join(os.path.expanduser("~"),'/Dropbox/tmp/index.html')],
+    parser.add_argument('--noURL', nargs=1, required=False, action='store', default=[os.path.join(os.path.expanduser("~"),'Dropbox/tmp/index.html')],
                         help='Use file instead of URL, for debug only')
     parser.add_argument('--debug', required=False, action='store_true', default=['False'], help='Run in debug mode')
     return parser.parse_args()
@@ -102,28 +103,10 @@ def initLogging(debug):
     logger.addHandler(ch)
     logger.debug('Logger info: %s', logger)
 
-
-def getDevices(args):
-    tree = ET.parse(args.configfile[0])
-    root = tree.getroot()
-    for dev in root.findall('device'):
-        zarizeni = FVDevice(dev.find('name').text)
-        for component in zarizeni.listComponents():
-            if hasattr(dev.find(component),'text'):
-                zarizeni.props[component] = dev.find(component).text
-        #zarizeni.props[runInLow = dev.get('runInLow')
-        print(zarizeni.props.items())
-
-        #logger.info("Name: %s, Consumption:%d|%d|%d, runInLow: %s, timeRangeName: %s", zarizeni.name, int(zarizeni.consumptionL1), int(zarizeni.consumptionL2), int(zarizeni.consumptionL3), zarizeni.runInLow, zarizeni.timeRangeName )
-        
-                
-#def getLowTime():          
-         
-            
-# ~ for country in root.findall('country'):
-    # ~ rank = country.find('rank').text
-    # ~ name = country.get('name')
-    # ~ print name, rank
+def getfuFullConfig(args):
+	with open(args.configfile[0]) as file:
+		fullconf = yaml.load(file, Loader=yaml.FullLoader)
+		logger.debug(yaml.dump(fullconf))
 
 ########################################################################
 
@@ -132,7 +115,7 @@ def main():
     initLogging(args.debug)
     logger.debug('Accepted params: %s', args)
     rawdata = getRawData(args)
-    devices = getDevices(args)
+    devices = getfuFullConfig(args)
 
 
 logger = logging.getLogger('FVctl')
