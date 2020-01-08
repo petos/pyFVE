@@ -8,6 +8,7 @@ import logging
 import sys
 import os.path
 import yaml
+import time
 
 
 class FVDevice:
@@ -33,33 +34,36 @@ def getHTMLfile(args, PRS):
     FVuser = args.FVuser[0]
     FVpwd = args.FVpwd[0]
     FVurl = args.FVurl[0]
-    if args.noURL:
-        with open(args.noURL[0], "r", encoding='ISO-8859-1') as myfile:
-            contentlist = myfile.readlines()
-        content = ''.join(contentlist)
-        PRS.feed(content)
-    else:
-        h = httplib2.Http(".cache")
-        h.add_credentials(FVuser, FVpwd)
-        try:
-            resp, content = h.request("http://" + FVurl)
-        except httplib2.ServerNotFoundError:
-            logger.error('Can not connect to %s', FVurl)
-            exit(11)
-        PRS.feed(content.decode('ISO-8859-1'))
+
+    h = httplib2.Http(cache=None)
+    h.add_credentials(FVuser, FVpwd)
+    try:
+        resp, content = h.request("http://" + FVurl)
+    except httplib2.ServerNotFoundError:
+        logger.error('Can not connect to %s', FVurl)
+        exit(11)
+    except httplib2.HttpLib2Error:
+        logger.error('Uncatched error')
+        exit(12)
+    PRS.feed(content.decode('ISO-8859-1'))
 
 
 def getRawData(args):
     PRS = MyHTMLParser()
+    start=time.time()
     getHTMLfile(args, PRS)
-    if PRS.data[(PRS.data.index('  aktuální')) + 1] == 'xxx':
-        PRS.data[(PRS.data.index('  aktuální')) + 1] = 0
-    rawdata = dict(produced_now=int(PRS.data[(PRS.data.index('  aktuální')) + 1]),
-                   today_total=float(PRS.data[(PRS.data.index('  denní energie')) + 1]),
-                   energy_total=int(PRS.data[(PRS.data.index('  energie celkem')) + 1]),
-                   state=str(PRS.data[(PRS.data.index('  stav')) + 1]), L1=int(PRS.data[(PRS.data.index('L1')) + 11]),
-                   L2=int(PRS.data[(PRS.data.index('L2')) + 11]), L3=int(PRS.data[(PRS.data.index('L3')) + 5]),
-                   bucket=int(PRS.data[(PRS.data.index('  aktuální')) + 1]))
+    end=time.time()
+    print(end - start)
+    PRS.data=[s.strip('\r  ').strip('\xa0').replace('x x x', '0') for s in PRS.data]
+    rawdata = dict(
+                   produced_now=int(PRS.data[(PRS.data.index('aktuální')) + 1]),
+                   today_total=float(PRS.data[(PRS.data.index('denní energie')) + 1]),
+                   energy_total=int(PRS.data[(PRS.data.index('energie celkem')) + 1]),
+                   state=str(PRS.data[(PRS.data.index('stav')) + 1]),
+                   L1=int(PRS.data[(PRS.data.index('L1')) + 11]),
+                   L2=int(PRS.data[(PRS.data.index('L2')) + 11]),
+                   L3=int(PRS.data[(PRS.data.index('L3')) + 5]),
+                   bucket=int(PRS.data[(PRS.data.index('aktuální')) + 1]))
     logger.debug('Parsed values: %s', rawdata)
     logger.info('Status          :  %s', rawdata['state'])
     logger.info('Producing now   :  %s [W]', rawdata['bucket'])
@@ -82,8 +86,6 @@ def parseArgs():
                         help='URL to FVE, default is \'stridac\'')
     parser.add_argument('--configfile', nargs=1, required=False, action='store', default=[os.path.join(os.path.expanduser("~"),'.FVrc')],
                         help='Path to default config. Default is ~/.FVrc')
-    parser.add_argument('--noURL', nargs=1, required=False, action='store', default=[os.path.join(os.path.expanduser("~"),'Dropbox/tmp/index.html')],
-                        help='Use file instead of URL, for debug only')
     parser.add_argument('--debug', required=False, action='store_true', default=['False'], help='Run in debug mode')
     return parser.parse_args()
 
