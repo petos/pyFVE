@@ -1,125 +1,171 @@
-#!/bin/env python3
 import argparse
-import httplib2
-import re
-from html.parser import HTMLParser
-# from html.entities import name2codepoint
 import logging
-import sys
-import os.path
+import requests
 import yaml
-import time
+from dataclasses import dataclass
+from typing import List
 
+# Logging setup
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+logger = logging.getLogger("FVEopt")
 
-class FVDevice:
-    def __init__(self, name):
-        self.name = name
-        self.props = { "name": name} 
-        
-    def listComponents(self):
-        return ["name","consumptionL1","consumptionL2","consumptionL3","timeRangeName","timeRangeName","FVtype"]
+@dataclass
+class LoadDevice:
+    id: int
+    jmeno: str
+    spotreba: int
+    ha_endpoint_teplota_min: str
+    ha_endpoint_teplota_max: str
+    ha_endpoint_teplota_aktualni: str
+    teplota_aktualni: float = None
+    teplota_max: float = None
+    teplota_min: float = None
+    stav: bool = False
 
-        
-class MyHTMLParser(HTMLParser):
-    def __init__(self):
-        HTMLParser.__init__(self)
-        self.data = []
+# Configuration holders
+load_devices: List[LoadDevice] = []
+low_tariff_entity: str = ""
+hass_base_url: str = ""
+hass_token: str = ""
 
-    def handle_data(self, data):
-        if not re.match(r'^\s*$', data):
-            self.data.append(re.sub(r'\n', '', data))
+def load_main_config(filepath: str):
+    global low_tariff_entity, hass_base_url, hass_token, hass_current_entity
+    logger.debug(f"Načítám hlavní konfiguraci z {filepath}...")
+    with open(filepath, "r") as f:
+        config = yaml.safe_load(f)
 
+    if not config:
+        raise ValueError("Hlavní konfigurační soubor je prázdný nebo nevalidní YAML.")
 
-def getHTMLfile(args, PRS):
-    FVuser = args.FVuser[0]
-    FVpwd = args.FVpwd[0]
-    FVurl = args.FVurl[0]
+    hass_base_url = config.get("hass_base_url")
+    hass_token = config.get("hass_token")
+    low_tariff_entity = config.get("low_tariff_entity")
+    hass_current_entity = config.get("hass_current_entity")
 
-    h = httplib2.Http(cache=None)
-    h.add_credentials(FVuser, FVpwd)
+    if not (hass_base_url and hass_token and low_tariff_entity and hass_current_entity):
+        raise KeyError("Chybí některé z povinných polí: hass_base_url, hass_token, low_tariff_entity, hass_current_entity")
+
+def load_device_config(filepath: str):
+    global load_devices
+    logger.debug(f"Načítám konfiguraci zařízení z {filepath}...")
+    with open(filepath, "r") as f:
+        config = yaml.safe_load(f)
+
+    if not config or "load_devices" not in config:
+        raise ValueError("Soubor zařízení neobsahuje klíč 'load_devices' nebo je prázdný.")
+
+    load_devices = []
+    for dev_cfg in config["load_devices"]:
+        device = LoadDevice(
+            id=dev_cfg["id"],
+            jmeno=dev_cfg["jmeno"],
+            spotreba=dev_cfg["spotreba"],
+            ha_endpoint_teplota_min=dev_cfg["ha_endpoint_teplota_min"],
+            ha_endpoint_teplota_max=dev_cfg["ha_endpoint_teplota_max"],
+            ha_endpoint_teplota_aktualni=dev_cfg["ha_endpoint_teplota_aktualni"]
+        )
+        load_devices.append(device)
+    logger.debug(f"Načteno {len(load_devices)} zařízení.")
+
+def ha_get_state(entity: str) -> str:
+    url = f"{hass_base_url}/api/states/{entity}"
+    headers = {"Authorization": f"Bearer {hass_token}"}
     try:
-        resp, content = h.request("http://" + FVurl)
-    except httplib2.ServerNotFoundError:
-        logger.error('Can not connect to %s', FVurl)
-        exit(11)
-    except httplib2.HttpLib2Error:
-        logger.error('Uncatched error')
-        exit(12)
-    PRS.feed(content.decode('ISO-8859-1'))
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
+        state = response.json()["state"]
+        logger.debug(f"HA stav {entity}: {state}")
+        return state
+    except Exception as e:
+        logger.error(f"Chyba při získávání stavu z HA pro {entity}: {e}")
+        return None
 
+def get_low_via_haapi(entity: str) -> bool:
+    state = ha_get_state(entity)
+    return state and state.lower() in ["on", "true", "1"]
 
-def getRawData(args):
-    PRS = MyHTMLParser()
-    start=time.time()
-    getHTMLfile(args, PRS)
-    end=time.time()
-    print(end - start)
-    PRS.data=[s.strip('\r  ').strip('\xa0').replace('x x x', '0') for s in PRS.data]
-    rawdata = dict(
-                   produced_now=int(PRS.data[(PRS.data.index('aktuální')) + 1]),
-                   today_total=float(PRS.data[(PRS.data.index('denní energie')) + 1]),
-                   energy_total=int(PRS.data[(PRS.data.index('energie celkem')) + 1]),
-                   state=str(PRS.data[(PRS.data.index('stav')) + 1]),
-                   L1=int(PRS.data[(PRS.data.index('L1')) + 11]),
-                   L2=int(PRS.data[(PRS.data.index('L2')) + 11]),
-                   L3=int(PRS.data[(PRS.data.index('L3')) + 5]),
-                   bucket=int(PRS.data[(PRS.data.index('aktuální')) + 1]))
-    logger.debug('Parsed values: %s', rawdata)
-    logger.info('Status          :  %s', rawdata['state'])
-    logger.info('Producing now   :  %s [W]', rawdata['bucket'])
-    logger.info('Today generated :  %s [kW]', rawdata['today_total'])
-    logger.info('L1              :  %s [W]', rawdata['L1'])
-    logger.info('L2              :  %s [W]', rawdata['L2'])
-    logger.info('L3              :  %s [W]', rawdata['L3'])
-    logger.info('Generated total :  %s [kW]', rawdata['energy_total'])
-    PRS.close
-    return rawdata
+def get_float_from_hass(entity: str) -> float:
+    state = ha_get_state(entity)
+    try:
+        return float(state)
+    except (TypeError, ValueError):
+        logger.error(f"Neplatná hodnota z {entity}: {state}")
+        return None
 
+def get_int_from_hass(entity: str) -> int:
+    state = ha_get_state(entity)
+    try:
+        return float(state)
+    except (TypeError, ValueError):
+        logger.error(f"Neplatná hodnota z {entity}: {state}")
+        return None
 
-def parseArgs():
-    parser = argparse.ArgumentParser(prog='FVctrl', description='Get FV and optimalize consumption.')
-    parser.add_argument('--FVuser', nargs=1, required=False, action='store', default=['pvserver'],
-                        help='Username of FVE user, default pvserver')
-    parser.add_argument('--FVpwd', nargs=1, required=False, action='store', default=['pvwr'],
-                        help='Username of FVE user, default pvwr')
-    parser.add_argument('--FVurl', nargs=1, required=False, action='store', default=['stridac'],
-                        help='URL to FVE, default is \'stridac\'')
-    parser.add_argument('--configfile', nargs=1, required=False, action='store', default=[os.path.join(os.path.expanduser("~"),'.FVrc')],
-                        help='Path to default config. Default is ~/.FVrc')
-    parser.add_argument('--debug', required=False, action='store_true', default=['False'], help='Run in debug mode')
-    return parser.parse_args()
+def get_devices_states():
+    for device in load_devices:
+        device.teplota_aktualni = get_float_from_hass(device.ha_endpoint_teplota_aktualni)
+        logger.debug(f"Zarizeni {device.jmeno}, aktualni teplota = {device.teplota_aktualni}")
+        device.teplota_max = get_float_from_hass(device.ha_endpoint_teplota_max)
+        logger.debug(f"Zarizeni {device.jmeno}, teplota max = {device.teplota_max}")
+        device.teplota_min = get_float_from_hass(device.ha_endpoint_teplota_min)
+        logger.debug(f"Zarizeni {device.jmeno}, teplota min = {device.teplota_min}")
+        if device.teplota_aktualni is None or device.teplota_max is None:
+            logger.warning(f"Nelze získat teploty pro zařízení {device.jmeno}, přeskočeno.")
+            device.stav = False
+            continue
 
+        logger.debug(f"{device.jmeno}: T_akt={device.teplota_aktualni}, T_MAX={device.teplota_max}, T_MIN={device.teplota_min}")
 
-def initLogging(debug):
-    logger.setLevel(logging.DEBUG)
-    fh = logging.FileHandler('log/FVctl.log',mode='a')
-    fh.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.INFO)
-    if debug is True:
-        ch.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(formatter)
-    ch.setFormatter(formatter)
-    logger.addHandler(fh)
-    logger.addHandler(ch)
-    logger.debug('Logger info: %s', logger)
+def decide_low_tarif(current_free_energy: int, low_tariff: bool):
+    logger.debug(f"Nizky tarif je {low_tariff}")
+    if not low_tariff:
+        return
+    else:
+        for device in load_devices:
+            if device.teplota_aktualni < device.teplota_min:
+                logger.info(f"Zapínám zařízení {device.jmeno} ({device.spotreba} W), aktualni teplota je nizsi nez min. teplota ({device.teplota_aktualni} < {device.teplota_min})")
+                current_free_energy -= device.spotreba
+                device.stav = True
+            else:
+                logger.debug(f"Zarizeni {device.jmeno} ({device.spotreba} W) se nezapina, aktualni teplota je vyssi nez min. teplota ({device.teplota_aktualni} > {device.teplota_min})")
 
-def getfuFullConfig(args):
-	with open(args.configfile[0]) as file:
-		fullconf = yaml.load(file, Loader=yaml.FullLoader)
-		logger.debug(yaml.dump(fullconf))
-
-########################################################################
+def decide_distribution(current_free_energy: int, low_tariff: bool):
+    logger.debug(f"Rozhodování o rozdělení energie: {current_free_energy} W, nízký tarif: {low_tariff}")
+    for device in load_devices:
+        if device.stav == True:
+            logger.debug(f"Zarizeni {device.jmeno} jiz zapnute")
+            continue
+        if current_free_energy >= device.spotreba and device.teplota_aktualni < device.teplota_max:
+            logger.info(f"Zapínám zařízení {device.jmeno} ({device.spotreba} W), dostatek energie {current_free_energy}")
+            current_free_energy -= device.spotreba
+            device.stav = True
+            continue
+        else:
+            logger.info(f"Zařízení {device.jmeno} se nezapíná – buď nedostatek energie (zbývá {current_free_energy} W) nebo teplota dosažena.")
+            device.stav = False
 
 def main():
-    args = parseArgs()
-    initLogging(args.debug)
-    logger.debug('Accepted params: %s', args)
-    rawdata = getRawData(args)
-    devices = getfuFullConfig(args)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--current_power", type=int, default=None, help="Promenná vhodná pro testování")
+    parser.add_argument("--device-config", type=str, default="/opt/fve/config/devices.yaml", help="Cesta ke konfiguraci zařízení")
+    parser.add_argument("--main-config", type=str, default="/opt/fve/config/fveconfig.yaml", help="Cesta k hlavní konfiguraci")
+    parser.add_argument("--debug", action="store_true", help="Zapne DEBUG výstup logování")
+    args = parser.parse_args()
 
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("DEBUG mód zapnut")
 
-logger = logging.getLogger('FVctl')
+    load_main_config(args.main_config)
+    load_device_config(args.device_config)
+    low_tariff = get_low_via_haapi(low_tariff_entity)
+    if args.current_power is not None:
+        current_power = args.current_power
+    else:
+        current_power = get_int_from_hass( hass_current_entity )
+    get_devices_states()
+    decide_low_tarif(current_power, low_tariff)
+    decide_distribution(current_power, low_tariff)
+    logging.debug(f"Done")
 
-main()
+if __name__ == "__main__":
+    main()
