@@ -1,7 +1,10 @@
+#!/bin/env python3
+
 import argparse
 import logging
 import requests
 import yaml
+from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Dict
 
@@ -22,6 +25,7 @@ class LoadDevice:
     teplota_max: float = None
     teplota_min: float = None
     stav: bool = False
+    stary_stav: bool = None
 
 # Configuration holders
 load_devices: List[LoadDevice] = []
@@ -88,7 +92,7 @@ def ha_cache_states():
 def ha_get_state(entity: str) -> str:
     return hass_state_cache.get(entity)
 
-def get_low_via_haapi(entity: str) -> bool:
+def get_bool_via_haapi(entity: str) -> bool:
     state = ha_get_state(entity)
     return state and state.lower() in ["on", "true", "1"]
 
@@ -110,18 +114,27 @@ def get_int_from_hass(entity: str) -> int:
 
 def get_devices_states():
     for device in load_devices:
+        device.stary_stav = get_bool_via_haapi(device.ha_endpoint_ctrl)
+        logger.debug(f"Zarizeni {device.jmeno}, aktualni stav: {device.stary_stav}")
         device.teplota_aktualni = get_float_from_hass(device.ha_endpoint_teplota_aktualni)
         logger.debug(f"Zarizeni {device.jmeno}, aktualni teplota = {device.teplota_aktualni}")
         device.teplota_max = get_float_from_hass(device.ha_endpoint_teplota_max)
         logger.debug(f"Zarizeni {device.jmeno}, teplota max = {device.teplota_max}")
         device.teplota_min = get_float_from_hass(device.ha_endpoint_teplota_min)
+        #kouzla s casem -- dopoledne je templota_min ponizena o 10 stupnu, ma sanci se dohrat z FVE
+        if int(datetime.now().strftime('%H')) < 12:
+            device.teplota_min -= 10
+            logger.debug(f"Teplota min snizena o 10C, protoze je pred polednem a je sance dohrat pres FVE")
+        else:
+            if int(datetime.date.today().weekday()) == 6:
+                device.teplota_min += 5
+                logger.debug(f"Teplota min zvednuta o 5C, protoze je nedele")
         logger.debug(f"Zarizeni {device.jmeno}, teplota min = {device.teplota_min}")
         if device.teplota_aktualni is None or device.teplota_max is None:
             logger.warning(f"Nelze získat teploty pro zařízení {device.jmeno}, přeskočeno.")
             device.stav = False
             continue
-
-        logger.debug(f"{device.jmeno}: T_akt={device.teplota_aktualni}, T_MAX={device.teplota_max}, T_MIN={device.teplota_min}")
+        logger.debug(f"{device.jmeno} ({device.stary_stav}): T_akt={device.teplota_aktualni}, T_MAX={device.teplota_max}, T_MIN={device.teplota_min}")
 
 def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
     logger.debug(f"Nizky tarif je {low_tariff}")
@@ -149,7 +162,7 @@ def decide_distribution(current_free_energy: int, low_tariff: bool):
             device.stav = True
             continue
         else:
-            logger.info(f"Zařízení {device.jmeno} se nezapíná – buď nedostatek energie (zbývá {current_free_energy} W) nebo teplota dosažena.")
+            logger.info(f"Zařízení {device.jmeno} se nezapíná – buď nedostatek energie (zbývá {current_free_energy} W) nebo teplota dosažena (aktual: {device.teplota_aktualni}, min: {device.teplota_min}, max: {device.teplota_max}).")
             device.stav = False
 
 def apply_device_states_to_ha():
@@ -158,8 +171,10 @@ def apply_device_states_to_ha():
         if not device.ha_endpoint_ctrl:
             logger.warning(f"Zařízení {device.jmeno} nemá definovaný ha_endpoint_ctrl, přeskočeno.")
             continue
-
         desired_state = "on" if device.stav else "off"
+        if device.stary_stav == device.stav:
+            logger.info(f"Zarizeni {device.jmeno} uz je -{desired_state}-, nemenime tedy stav")
+            continue
         domain, entity = device.ha_endpoint_ctrl.split(".", 1)
         url = f"{hass_base_url}/api/services/{domain}/turn_{desired_state}"
         headers = {
@@ -190,7 +205,7 @@ def main():
     load_main_config(args.main_config)
     load_device_config(args.device_config)
     ha_cache_states()
-    low_tariff = get_low_via_haapi(low_tariff_entity)
+    low_tariff = get_bool_via_haapi(low_tariff_entity)
 
     if args.current_power is not None:
         logger.debug(f"Current value got from CLI")
