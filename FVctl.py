@@ -4,6 +4,7 @@ import argparse
 import logging
 import requests
 import yaml
+import time
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Dict
@@ -220,4 +221,6 @@ def main():
     logger.debug(f"Done")
 
 if __name__ == "__main__":
-    main()
+    while True:
+        main()
+        time.sleep(10)
