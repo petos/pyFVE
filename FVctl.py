@@ -126,7 +126,7 @@ def get_devices_states():
             device.teplota_min -= 10
             logger.debug(f"Teplota min snizena o 10C, protoze je pred polednem a je sance dohrat pres FVE")
         else:
-            if int(datetime.date.today().weekday()) == 6:
+            if int(datetime.today().weekday()) == 6:
                 device.teplota_min += 5
                 logger.debug(f"Teplota min zvednuta o 5C, protoze je nedele")
         logger.debug(f"Zarizeni {device.jmeno}, teplota min = {device.teplota_min}")
