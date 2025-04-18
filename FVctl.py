@@ -76,7 +76,7 @@ def load_device_config(filepath: str):
         load_devices.append(device)
     logger.debug(f"Načteno {len(load_devices)} zařízení.")
 
-def ha_cache_states():
+def ha_cache_states() -> bool:
     global hass_state_cache
     url = f"{hass_base_url}/api/states"
     headers = {"Authorization": f"Bearer {hass_token}"}
@@ -86,9 +86,11 @@ def ha_cache_states():
         data = response.json()
         hass_state_cache = {item["entity_id"]: item["state"] for item in data}
         logger.debug(f"Načteno {len(hass_state_cache)} stavů z Home Assistant.")
+        return True
     except Exception as e:
         logger.error(f"Chyba při načítání stavů z HA: {e}")
         hass_state_cache = {}
+        return False
 
 def ha_get_state(entity: str) -> str:
     return hass_state_cache.get(entity)
@@ -122,12 +124,11 @@ def get_devices_states():
         device.teplota_max = get_float_from_hass(device.ha_endpoint_teplota_max)
         logger.debug(f"Zarizeni {device.jmeno}, teplota max = {device.teplota_max}")
         device.teplota_min = get_float_from_hass(device.ha_endpoint_teplota_min)
-        #kouzla s casem -- dopoledne je templota_min ponizena o 10 stupnu, ma sanci se dohrat z FVE
         if int(datetime.now().strftime('%H')) < 12:
             device.teplota_min -= 10
             logger.debug(f"Teplota min snizena o 10C, protoze je pred polednem a je sance dohrat pres FVE")
         else:
-            if int(datetime.today().weekday()) == 6:
+            if datetime.today().weekday() == 6:
                 device.teplota_min += 5
                 logger.debug(f"Teplota min zvednuta o 5C, protoze je nedele")
         logger.debug(f"Zarizeni {device.jmeno}, teplota min = {device.teplota_min}")
@@ -157,14 +158,25 @@ def decide_distribution(current_free_energy: int, low_tariff: bool):
         if device.stav == True:
             logger.debug(f"Zarizeni {device.jmeno} jiz zapnute")
             continue
-        if current_free_energy >= device.spotreba and device.teplota_aktualni < device.teplota_max:
-            logger.info(f"Zapínám zařízení {device.jmeno} ({device.spotreba} W), dostatek energie {current_free_energy}")
-            current_free_energy -= device.spotreba
-            device.stav = True
-            continue
-        else:
-            logger.info(f"Zařízení {device.jmeno} se nezapíná – buď nedostatek energie (zbývá {current_free_energy} W) nebo teplota dosažena (aktual: {device.teplota_aktualni}, min: {device.teplota_min}, max: {device.teplota_max}).")
+        if device.teplota_aktualni >= device.teplota_max:
+            logger.info(
+                f"Zařízení {device.jmeno} se nezapíná – dosažena max. teplota "
+                f"(aktuální: {device.teplota_aktualni} >= max: {device.teplota_max})"
+            )
             device.stav = False
+            continue
+        if current_free_energy < device.spotreba:
+            logger.info(
+                f"Zařízení {device.jmeno} se nezapíná – nedostatek energie "
+                f"(zbývá {current_free_energy} W, potřeba: {device.spotreba} W)"
+            )
+            device.stav = False
+            continue
+        logger.info(
+            f"Zapínám zařízení {device.jmeno} ({device.spotreba} W), dostatek energie {current_free_energy}"
+        )
+        current_free_energy -= device.spotreba
+        device.stav = True
 
 def apply_device_states_to_ha():
     logger.debug("Aplikuji stavy zařízení do Home Assistant...")
@@ -205,7 +217,11 @@ def main():
 
     load_main_config(args.main_config)
     load_device_config(args.device_config)
-    ha_cache_states()
+
+    if not ha_cache_states():
+        logger.error("Nepodařilo se načíst data z Home Assistant, čekám 10s...")
+        return
+
     low_tariff = get_bool_via_haapi(low_tariff_entity)
 
     if args.current_power is not None:
