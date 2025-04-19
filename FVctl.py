@@ -135,8 +135,9 @@ def get_devices_states():
         if device.teplota_aktualni is None or device.teplota_max is None:
             logger.warning(f"Nelze získat teploty pro zařízení {device.jmeno}, přeskočeno.")
             device.stav = False
-            continue
+            return False
         logger.debug(f"{device.jmeno} ({device.stary_stav}): T_akt={device.teplota_aktualni}, T_MAX={device.teplota_max}, T_MIN={device.teplota_min}")
+    return True
 
 def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
     logger.debug(f"Nizky tarif je {low_tariff}")
@@ -230,7 +231,10 @@ def main():
     else:
         current_power = get_int_from_hass(hass_current_entity)
 
-    get_devices_states()
+    if not get_devices_states():
+        logger.error("Nepodařilo se načíst validni data z Home Assistant, čekám 10s...")
+        return
+
     current_power = decide_low_tarif(current_power, low_tariff)
     decide_distribution(current_power, low_tariff)
     apply_device_states_to_ha()
