@@ -251,9 +251,11 @@ def main():
     logger.debug(f"Done")
 
 if __name__ == "__main__":
+    running = True
     try:
-      while True:
-        main()
-        time.sleep(10)
+        while running:
+            main()
+            time.sleep(10)
     except KeyboardInterrupt:
         logger.info("Skript ukončen uživatelem.")
+        running = False
