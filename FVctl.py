@@ -21,12 +21,14 @@ class LoadDevice:
     ha_endpoint_teplota_min: str
     ha_endpoint_teplota_max: str
     ha_endpoint_teplota_aktualni: str
+    ha_endpoint_dovolena: str = ""
     ha_endpoint_ctrl: str = ""
     teplota_aktualni: float = None
     teplota_max: float = None
     teplota_min: float = None
     stav: bool = False
     stary_stav: bool = None
+    dovolena: bool = True
 
 # Configuration holders
 load_devices: List[LoadDevice] = []
@@ -72,6 +74,7 @@ def load_device_config(filepath: str):
             ha_endpoint_teplota_max=dev_cfg["ha_endpoint_teplota_max"],
             ha_endpoint_teplota_aktualni=dev_cfg["ha_endpoint_teplota_aktualni"],
             ha_endpoint_ctrl=dev_cfg.get("ha_endpoint_ctrl", "")
+            ha_endpoint_dovolena=dev_cfg.get("ha_endpoint_dovolena", "")
         )
         load_devices.append(device)
     logger.debug(f"Načteno {len(load_devices)} zařízení.")
@@ -118,24 +121,24 @@ def get_int_from_hass(entity: str) -> int:
 def get_devices_states():
     for device in load_devices:
         device.stary_stav = get_bool_via_haapi(device.ha_endpoint_ctrl)
+        device.dovolena = get_bool_via_haapi(device.ha_endpoint_dovolena)
         logger.debug(f"Zarizeni {device.jmeno}, aktualni stav: {device.stary_stav}")
         device.teplota_aktualni = get_float_from_hass(device.ha_endpoint_teplota_aktualni)
         logger.debug(f"Zarizeni {device.jmeno}, aktualni teplota = {device.teplota_aktualni}")
         device.teplota_max = get_float_from_hass(device.ha_endpoint_teplota_max)
         logger.debug(f"Zarizeni {device.jmeno}, teplota max = {device.teplota_max}")
         device.teplota_min = get_float_from_hass(device.ha_endpoint_teplota_min)
-        if int(datetime.now().strftime('%H')) < 12:
+        if device.teplota_aktualni is None or device.teplota_max is None:
+            logger.warning(f"Nelze získat teploty pro zařízení {device.jmeno}, přeskočeno.")
+            device.stav = False
+            return False
+        if datetime.now().hour < 12:
             device.teplota_min -= 10
             logger.debug(f"Teplota min snizena o 10C, protoze je pred polednem a je sance dohrat pres FVE")
         else:
             if datetime.today().weekday() == 6:
                 device.teplota_min += 5
                 logger.debug(f"Teplota min zvednuta o 5C, protoze je nedele")
-        logger.debug(f"Zarizeni {device.jmeno}, teplota min = {device.teplota_min}")
-        if device.teplota_aktualni is None or device.teplota_max is None:
-            logger.warning(f"Nelze získat teploty pro zařízení {device.jmeno}, přeskočeno.")
-            device.stav = False
-            return False
         logger.debug(f"{device.jmeno} ({device.stary_stav}): T_akt={device.teplota_aktualni}, T_MAX={device.teplota_max}, T_MIN={device.teplota_min}")
     return True
 
@@ -156,6 +159,10 @@ def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
 def decide_distribution(current_free_energy: int, low_tariff: bool):
     logger.debug(f"Rozhodování o rozdělení energie: {current_free_energy} W, nízký tarif: {low_tariff}")
     for device in load_devices:
+        if device.dovolena = True:
+            logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Vypinam"
+            device.stav == False
+            continue
         if device.stav == True:
             logger.debug(f"Zarizeni {device.jmeno} jiz zapnute")
             continue
@@ -189,6 +196,9 @@ def apply_device_states_to_ha():
         if device.stary_stav == device.stav:
             logger.info(f"Zarizeni {device.jmeno} uz je -{desired_state}-, nemenime tedy stav")
             continue
+        if "." not in device.ha_endpoint_ctrl:
+            logger.error(f"Špatný formát ha_endpoint_ctrl u zařízení {device.jmeno}: {device.ha_endpoint_ctrl}")
+            continue
         domain, entity = device.ha_endpoint_ctrl.split(".", 1)
         url = f"{hass_base_url}/api/services/{domain}/turn_{desired_state}"
         headers = {
@@ -221,7 +231,7 @@ def main():
 
     if not ha_cache_states():
         logger.error("Nepodařilo se načíst data z Home Assistant, čekám 10s...")
-        return
+        return False
 
     low_tariff = get_bool_via_haapi(low_tariff_entity)
 
@@ -241,6 +251,9 @@ def main():
     logger.debug(f"Done")
 
 if __name__ == "__main__":
-    while True:
+    try:
+      while True:
         main()
         time.sleep(10)
+    except KeyboardInterrupt:
+        logger.info("Skript ukončen uživatelem.")
