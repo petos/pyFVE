@@ -73,7 +73,7 @@ def load_device_config(filepath: str):
             ha_endpoint_teplota_min=dev_cfg["ha_endpoint_teplota_min"],
             ha_endpoint_teplota_max=dev_cfg["ha_endpoint_teplota_max"],
             ha_endpoint_teplota_aktualni=dev_cfg["ha_endpoint_teplota_aktualni"],
-            ha_endpoint_ctrl=dev_cfg.get("ha_endpoint_ctrl", "")
+            ha_endpoint_ctrl=dev_cfg.get("ha_endpoint_ctrl", ""),
             ha_endpoint_dovolena=dev_cfg.get("ha_endpoint_dovolena", "")
         )
         load_devices.append(device)
