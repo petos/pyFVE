@@ -160,7 +160,7 @@ def decide_distribution(current_free_energy: int, low_tariff: bool):
     logger.debug(f"Rozhodování o rozdělení energie: {current_free_energy} W, nízký tarif: {low_tariff}")
     for device in load_devices:
         if device.dovolena == True:
-            logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Vypinam"
+            logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Vypinam")
             device.stav == False
             continue
         if device.stav == True:
