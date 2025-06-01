@@ -29,6 +29,7 @@ class LoadDevice:
     stav: bool = False
     stary_stav: bool = None
     dovolena: bool = True
+    sunday_boost: int = 5
 
 # Configuration holders
 load_devices: List[LoadDevice] = []
@@ -70,6 +71,7 @@ def load_device_config(filepath: str):
             id=dev_cfg["id"],
             jmeno=dev_cfg["jmeno"],
             spotreba=dev_cfg["spotreba"],
+            sunday_boost=dev_cfg["sunday_boost"],
             ha_endpoint_teplota_min=dev_cfg["ha_endpoint_teplota_min"],
             ha_endpoint_teplota_max=dev_cfg["ha_endpoint_teplota_max"],
             ha_endpoint_teplota_aktualni=dev_cfg["ha_endpoint_teplota_aktualni"],
@@ -137,8 +139,8 @@ def get_devices_states():
             logger.debug(f"Teplota min snizena o 10C, protoze je pred polednem a je sance dohrat pres FVE")
         else:
             if datetime.today().weekday() == 6:
-                device.teplota_min += 5
-                logger.debug(f"Teplota min zvednuta o 5C, protoze je nedele")
+                device.teplota_min += device.sunday_boost
+                logger.debug(f"Teplota min zvednuta o {device.sunday_boost} C, protoze je nedele")
         logger.debug(f"{device.jmeno} ({device.stary_stav}): T_akt={device.teplota_aktualni}, T_MAX={device.teplota_max}, T_MIN={device.teplota_min}")
     return True
 
@@ -147,6 +149,9 @@ def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
     if not low_tariff:
         return current_free_energy
     else:
+        if device.dovolena == True:
+            logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Nastavuji 20C")
+            device.teplota_min = 20
         for device in load_devices:
             if device.teplota_aktualni < device.teplota_min:
                 logger.info(f"Zapínám zařízení {device.jmeno} ({device.spotreba} W), aktualni teplota je nizsi nez min. teplota ({device.teplota_aktualni} < {device.teplota_min})")
