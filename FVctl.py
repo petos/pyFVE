@@ -149,10 +149,11 @@ def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
     if not low_tariff:
         return current_free_energy
     else:
-        if device.dovolena == True:
-            logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Nastavuji 20C")
-            device.teplota_min = 20
         for device in load_devices:
+            if device.dovolena == True:
+                logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Nastavuji 20C")
+                device.teplota_min = 20
+                continue
             if device.teplota_aktualni < device.teplota_min:
                 logger.info(f"Zapínám zařízení {device.jmeno} ({device.spotreba} W), aktualni teplota je nizsi nez min. teplota ({device.teplota_aktualni} < {device.teplota_min})")
                 current_free_energy -= device.spotreba
