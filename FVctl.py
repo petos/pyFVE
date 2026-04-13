@@ -34,13 +34,17 @@ class LoadDevice:
 # Configuration holders
 load_devices: List[LoadDevice] = []
 low_tariff_entity: str = ""
+ha_max_charge_current_entity: str = ""
+ha_battery_voltage_entity: str = ""
+general_max_entity: str = ""
 hass_base_url: str = ""
 hass_token: str = ""
 hass_current_entity: str = ""
 hass_state_cache: Dict[str, str] = {}
+DEFAULT_MAX_TEMP = 60
 
 def load_main_config(filepath: str):
-    global low_tariff_entity, hass_base_url, hass_token, hass_current_entity
+    global low_tariff_entity, hass_base_url, hass_token, hass_current_entity, general_max_entity, ha_battery_voltage_entity, ha_max_charge_current_entity
     logger.debug(f"Načítám hlavní konfiguraci z {filepath}...")
     with open(filepath, "r") as f:
         config = yaml.safe_load(f)
@@ -48,13 +52,27 @@ def load_main_config(filepath: str):
     if not config:
         raise ValueError("Hlavní konfigurační soubor je prázdný nebo nevalidní YAML.")
 
+    required_keys = [
+        "hass_base_url",
+        "hass_token",
+        "low_tariff_entity",
+        "hass_current_entity",
+        "general_max_entity",
+        "ha_max_charge_current_entity",
+        "ha_battery_voltage_entity",
+    ]
+
+    missing = [key for key in required_keys if key not in config or config.get(key) is None]
+    if missing:
+        raise KeyError(f"Chybí povinné klíče v konfiguraci: {', '.join(missing)}")
+
     hass_base_url = config.get("hass_base_url")
     hass_token = config.get("hass_token")
     low_tariff_entity = config.get("low_tariff_entity")
     hass_current_entity = config.get("hass_current_entity")
-
-    if not (hass_base_url and hass_token and low_tariff_entity and hass_current_entity):
-        raise KeyError("Chybí některé z povinných polí: hass_base_url, hass_token, low_tariff_entity, hass_current_entity")
+    general_max_entity = config.get("general_max_entity")
+    ha_battery_voltage_entity = config.get("ha_battery_voltage_entity")
+    ha_max_charge_current_entity = config.get("ha_max_charge_current_entity")
 
 def load_device_config(filepath: str):
     global load_devices
@@ -64,7 +82,21 @@ def load_device_config(filepath: str):
 
     if not config or "load_devices" not in config:
         raise ValueError("Soubor zařízení neobsahuje klíč 'load_devices' nebo je prázdný.")
+    required_device_keys = [
+        "id",
+        "jmeno",
+        "spotreba",
+        "ha_endpoint_teplota_min",
+        "ha_endpoint_teplota_max",
+        "ha_endpoint_teplota_aktualni",
+        "ha_endpoint_ctrl",
+        "ha_endpoint_dovolena",
+    ]
 
+    for i, dev_cfg in enumerate(config["load_devices"]):
+        missing = [k for k in required_device_keys if k not in dev_cfg]
+        if missing:
+            raise KeyError(f"Device #{i} missing keys: {missing}")
     load_devices = []
     for dev_cfg in config["load_devices"]:
         device = LoadDevice(
@@ -102,7 +134,7 @@ def ha_get_state(entity: str) -> str:
 
 def get_bool_via_haapi(entity: str) -> bool:
     state = ha_get_state(entity)
-    return state and state.lower() in ["on", "true", "1"]
+    return str(state).strip().lower() in {"on", "true", "1"}
 
 def get_float_from_hass(entity: str) -> float:
     state = ha_get_state(entity)
@@ -130,12 +162,13 @@ def get_devices_states():
         device.teplota_max = get_float_from_hass(device.ha_endpoint_teplota_max)
         logger.debug(f"Zarizeni {device.jmeno}, teplota max = {device.teplota_max}")
         device.teplota_min = get_float_from_hass(device.ha_endpoint_teplota_min)
-        if device.teplota_aktualni is None or device.teplota_max is None:
+        logger.debug(f"Zarizeni {device.jmeno}, teplota min = {device.teplota_min}")
+        if device.teplota_aktualni is None or device.teplota_max is None or device.teplota_min is None:
             logger.warning(f"Nelze získat teploty pro zařízení {device.jmeno}, přeskočeno.")
             device.stav = False
-            return False
+            continue
         if datetime.now().hour < 12:
-            device.teplota_min -= 10
+            device.teplota_min = max( 10, device.teplota_min - 10)
             logger.debug(f"Teplota min snizena o 10C, protoze je pred polednem a je sance dohrat pres FVE")
         else:
             if datetime.today().weekday() == 6:
@@ -146,9 +179,7 @@ def get_devices_states():
 
 def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
     logger.debug(f"Nizky tarif je {low_tariff}")
-    if not low_tariff:
-        return current_free_energy
-    else:
+    if low_tariff:
         for device in load_devices:
             if device.dovolena == True:
                 logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Nastavuji 20C")
@@ -157,21 +188,29 @@ def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
             if device.teplota_aktualni < device.teplota_min:
                 logger.info(f"Zapínám zařízení {device.jmeno} ({device.spotreba} W), aktualni teplota je nizsi nez min. teplota ({device.teplota_aktualni} < {device.teplota_min})")
                 current_free_energy -= device.spotreba
+                if current_free_energy < 0:
+                    current_free_energy = 0
                 device.stav = True
             else:
                 logger.debug(f"Zarizeni {device.jmeno} ({device.spotreba} W) se nezapina, aktualni teplota je vyssi nez min. teplota ({device.teplota_aktualni} > {device.teplota_min})")
     return current_free_energy
 
-def decide_distribution(current_free_energy: int, low_tariff: bool):
-    logger.debug(f"Rozhodování o rozdělení energie: {current_free_energy} W, nízký tarif: {low_tariff}")
+def decide_distribution(current_free_energy: int, rerun: bool) -> int:
+    logger.debug(f"Rozhodování o rozdělení energie: {current_free_energy} W")
+    if rerun:
+        general_max = get_int_from_hass(general_max_entity)
+        if general_max is None:
+            general_max = DEFAULT_MAX_TEMP
     for device in load_devices:
         if device.dovolena == True:
             logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Vypinam")
-            device.stav == False
+            device.stav = False
             continue
         if device.stav == True:
             logger.debug(f"Zarizeni {device.jmeno} jiz zapnute")
             continue
+        if rerun:
+            device.teplota_max = general_max
         if device.teplota_aktualni >= device.teplota_max:
             logger.info(
                 f"Zařízení {device.jmeno} se nezapíná – dosažena max. teplota "
@@ -190,7 +229,10 @@ def decide_distribution(current_free_energy: int, low_tariff: bool):
             f"Zapínám zařízení {device.jmeno} ({device.spotreba} W), dostatek energie {current_free_energy}"
         )
         current_free_energy -= device.spotreba
+        if current_free_energy < 0:
+            current_free_energy = 0
         device.stav = True
+    return current_free_energy
 
 def apply_device_states_to_ha():
     logger.debug("Aplikuji stavy zařízení do Home Assistant...")
@@ -239,20 +281,50 @@ def main():
         logger.error("Nepodařilo se načíst data z Home Assistant, čekám 10s...")
         return False
 
-    low_tariff = get_bool_via_haapi(low_tariff_entity)
+    low_tariff = get_bool_via_haapi(low_tariff_entity) or False
+
+    #Napeti na baterii
+    ha_battery_voltage = get_int_from_hass(ha_battery_voltage_entity) or 0
+    #Maximalni nabijeci proud 
+    ha_max_charge_current = get_int_from_hass(ha_max_charge_current_entity) or 0
+
+    max_battery_charge_power = ha_battery_voltage * ha_max_charge_current
+    if max_battery_charge_power > 0:
+        max_battery_charge_power = 0
+    else:
+        max_battery_charge_power = abs(max_battery_charge_power)
 
     if args.current_power is not None:
         logger.debug(f"Current value got from CLI")
         current_power = args.current_power
     else:
-        current_power = get_int_from_hass(hass_current_entity)
+        current_power = get_int_from_hass(hass_current_entity) or 0
 
     if not get_devices_states():
         logger.error("Nepodařilo se načíst validni data z Home Assistant, čekám 10s...")
         return
 
+    # rozhodni si nizky tarif a pripadne pozapinat zarizeni v ramci nizkeho tarifu
+    logger.debug(f"Low tarif detection")
     current_power = decide_low_tarif(current_power, low_tariff)
-    decide_distribution(current_power, low_tariff)
+    # zapnout zarizeni v zavislosti na FV vykonu. Pokud je nejake zaple,
+    # je zapnute z nizkeho tarifu a tim padem nechat zapnute
+    logger.debug(f"Deciding whatever is supposed to run")
+    current_power = decide_distribution(current_power, False)
+
+    # Pokud cpeme do baterie max, tak muze zbyt dost energie. snizime current power
+    # o to, co se cpe do baterie a znovu se projede decide_distribution.
+    # ovsem s flagem rerun = True, kdyz se zvedne teplota na maximalni.
+    # ta se totiz pro prvni prubeh upravuje s ohledem na nabiti baterie
+    # timto by tedy melo zbyt energie na plny vykon do baterie a presto
+    # jeste pripadne mozno zapnout bojler
+    if current_power > max_battery_charge_power:
+        logger.info(f"Current power > max_battery_charge_power --> rerun of decide_distribution")
+        current_power = current_power - max_battery_charge_power
+        logger.info(f"New current_power = %d, rerun == True", current_power)
+        current_power = decide_distribution(current_power, True)
+    # nastavit statusy do HA
+    logger.debug(f"Setting switches in HA")
     apply_device_states_to_ha()
     logger.debug(f"Done")
 
