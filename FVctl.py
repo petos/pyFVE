@@ -169,6 +169,8 @@ def get_devices_states():
             device.stav = False
             device.enable = False
             continue
+        else:
+            device.enable = True
         if datetime.now().hour < 12:
             device.teplota_min = max( 10, device.teplota_min - 10)
             logger.debug(f"Teplota min snizena o 10C, protoze je pred polednem a je sance dohrat pres FVE")
