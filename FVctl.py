@@ -184,7 +184,7 @@ def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
     if low_tariff:
         for device in load_devices:
             if device.enable == False:
-                logger.warning(f"Zarizeni {device.name} se nezapina, je v disabled stavu")
+                logger.warning(f"Zarizeni {device.jmeno} se nezapina, je v disabled stavu")
                 continue
             if device.dovolena == True:
                 logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Nastavuji 20C")
@@ -208,7 +208,7 @@ def decide_distribution(current_free_energy: int, rerun: bool) -> int:
             general_max = DEFAULT_MAX_TEMP
     for device in load_devices:
         if device.enable == False:
-            logger.warning(f"Zarizeni {device.name} se nezapina, je v disabled stavu")
+            logger.warning(f"Zarizeni {device.jmeno} se nezapina, je v disabled stavu")
             continue
         if device.dovolena == True:
             logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Vypinam")
