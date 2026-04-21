@@ -30,6 +30,7 @@ class LoadDevice:
     stary_stav: bool = None
     dovolena: bool = True
     sunday_boost: int = 5
+    enable: bool = False
 
 # Configuration holders
 load_devices: List[LoadDevice] = []
@@ -164,9 +165,12 @@ def get_devices_states():
         device.teplota_min = get_float_from_hass(device.ha_endpoint_teplota_min)
         logger.debug(f"Zarizeni {device.jmeno}, teplota min = {device.teplota_min}")
         if device.teplota_aktualni is None or device.teplota_max is None or device.teplota_min is None:
-            logger.warning(f"Nelze získat teploty pro zařízení {device.jmeno}, přeskočeno.")
+            logger.error(f"Nelze získat teploty pro zařízení {device.jmeno}, přeskočeno.")
             device.stav = False
+            device.enable = False
             continue
+        else:
+            device.enable = True
         if datetime.now().hour < 12:
             device.teplota_min = max( 10, device.teplota_min - 10)
             logger.debug(f"Teplota min snizena o 10C, protoze je pred polednem a je sance dohrat pres FVE")
@@ -181,6 +185,9 @@ def decide_low_tarif(current_free_energy: int, low_tariff: bool) -> int:
     logger.debug(f"Nizky tarif je {low_tariff}")
     if low_tariff:
         for device in load_devices:
+            if device.enable == False:
+                logger.warning(f"Zarizeni {device.jmeno} se nezapina, je v disabled stavu")
+                continue
             if device.dovolena == True:
                 logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Nastavuji 20C")
                 device.teplota_min = 20
@@ -202,6 +209,9 @@ def decide_distribution(current_free_energy: int, rerun: bool) -> int:
         if general_max is None:
             general_max = DEFAULT_MAX_TEMP
     for device in load_devices:
+        if device.enable == False:
+            logger.warning(f"Zarizeni {device.jmeno} se nezapina, je v disabled stavu")
+            continue
         if device.dovolena == True:
             logger.info(f"Zarizeni {device.jmeno} ma dovolenou. Vypinam")
             device.stav = False
