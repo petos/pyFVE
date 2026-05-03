@@ -327,7 +327,7 @@ def main():
     # timto by tedy melo zbyt energie na plny vykon do baterie a presto
     # jeste pripadne mozno zapnout bojler
     if current_power > max_battery_charge_power:
-        logger.info(f"Current power > max_battery_charge_power --> rerun of decide_distribution: %d < %d", current_power, max_battery_charge_power)
+        logger.info(f"Current power > max_battery_charge_power --> rerun of decide_distribution: %d > %d", current_power, max_battery_charge_power)
         current_power = current_power - max_battery_charge_power
         logger.info(f"New current_power = %d, rerun == True", current_power)
         current_power = decide_distribution(current_power, True)
